@@ -785,9 +785,22 @@ fn read_uuid_info() -> UuidInfo {
 
 #[cfg(target_os = "windows")]
 fn get_wmi() -> Result<WMIConnection, wmi::WMIError> {
-    let com_con = COMLibrary::new()?;
-    let wmi_con = WMIConnection::new(com_con)?;
-    Ok(wmi_con)
+    // Attempt to initialize COM. If it fails (e.g. already initialized), fall back to assuming it is initialized.
+    let com_con = match COMLibrary::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("HardwareInfo: COMLibrary::new() failed: {:?}. Assuming COM is already initialized.", e);
+            unsafe { COMLibrary::assume_initialized() }
+        }
+    };
+
+    match WMIConnection::new(com_con) {
+        Ok(con) => Ok(con),
+        Err(e) => {
+            eprintln!("HardwareInfo: WMIConnection::new() failed: {:?}", e);
+            Err(e)
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -806,19 +819,22 @@ fn read_cpu_ids() -> (String, String, String) {
 fn read_memory_layout() -> Vec<MemorySlot> {
     let mut slots = Vec::new();
     if let Ok(wmi_con) = get_wmi() {
-        if let Ok(results) = wmi_con.query::<Win32PhysicalMemory>() {
-            for (index, mem) in results.iter().enumerate() {
-                slots.push(MemorySlot {
-                    slot: index,
-                    size: mem.capacity.unwrap_or(0),
-                    clock_speed: mem.speed.unwrap_or(0) as u64,
-                    mem_type: format!("{:?}", mem.memory_type.unwrap_or(0)),
-                    form_factor: format!("{:?}", mem.form_factor.unwrap_or(0)),
-                    manufacturer: mem.manufacturer.clone().unwrap_or_default(),
-                    part_num: mem.part_number.clone().unwrap_or_default(),
-                    serial_num: mem.serial_number.clone().unwrap_or_default(),
-                });
+        match wmi_con.query::<Win32PhysicalMemory>() {
+            Ok(results) => {
+                for (index, mem) in results.iter().enumerate() {
+                    slots.push(MemorySlot {
+                        slot: index,
+                        size: mem.capacity.unwrap_or(0),
+                        clock_speed: mem.speed.unwrap_or(0) as u64,
+                        mem_type: format!("{:?}", mem.memory_type.unwrap_or(0)),
+                        form_factor: format!("{:?}", mem.form_factor.unwrap_or(0)),
+                        manufacturer: mem.manufacturer.clone().unwrap_or_default(),
+                        part_num: mem.part_number.clone().unwrap_or_default(),
+                        serial_num: mem.serial_number.clone().unwrap_or_default(),
+                    });
+                }
             }
+            Err(e) => eprintln!("HardwareInfo: WMI Query Win32PhysicalMemory failed: {:?}", e),
         }
     }
     slots
@@ -846,13 +862,16 @@ fn read_gpu_info() -> Vec<GpuController> {
 fn read_baseboard_info() -> BaseboardInfo {
     let mut info = BaseboardInfo::default();
     if let Ok(wmi_con) = get_wmi() {
-        if let Ok(results) = wmi_con.query::<Win32BaseBoard>() {
-            if let Some(board) = results.first() {
-                info.manufacturer = board.manufacturer.clone().unwrap_or_default();
-                info.model = board.product.clone().unwrap_or_default();
-                info.version = board.version.clone().unwrap_or_default();
-                info.serial = board.serial_number.clone().unwrap_or_default();
+        match wmi_con.query::<Win32BaseBoard>() {
+            Ok(results) => {
+                if let Some(board) = results.first() {
+                    info.manufacturer = board.manufacturer.clone().unwrap_or_default();
+                    info.model = board.product.clone().unwrap_or_default();
+                    info.version = board.version.clone().unwrap_or_default();
+                    info.serial = board.serial_number.clone().unwrap_or_default();
+                }
             }
+            Err(e) => eprintln!("HardwareInfo: WMI Query Win32BaseBoard failed: {:?}", e),
         }
     }
     info
