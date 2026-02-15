@@ -4,8 +4,7 @@ use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, Re
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
-#[cfg(target_os = "windows")]
-use wmi::{COMLibrary, WMIConnection};
+
 
 // ——— Data structs (mirror the original JS API shape) ———
 
@@ -224,59 +223,7 @@ pub struct LiveInfo {
     pub runtime: RuntimeInfo,
 }
 
-// ——— WMI Structs (Windows only) ———
 
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32VideoController {
-    name: String,
-    video_processor: Option<String>,
-    adapter_r_a_m: Option<u64>,
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32PhysicalMemory {
-    capacity: Option<u64>,
-    speed: Option<u32>,
-    manufacturer: Option<String>,
-    part_number: Option<String>,
-    serial_number: Option<String>,
-    form_factor: Option<u16>,
-    memory_type: Option<u16>,
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32BaseBoard {
-    manufacturer: Option<String>,
-    product: Option<String>, // Model
-    version: Option<String>,
-    serial_number: Option<String>,
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32BIOS {
-    manufacturer: Option<String>,
-    #[serde(rename = "SMBIOSBIOSVersion")]
-    smbios_bios_version: Option<String>,
-    release_date: Option<String>,
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "PascalCase")]
-struct Win32NetworkAdapterConfiguration {
-    #[serde(rename = "MACAddress")]
-    mac_address: Option<String>,
-    #[serde(rename = "IPEnabled")]
-    ip_enabled: Option<bool>,
-}
 
 // ——— Collection functions ———
 
@@ -781,27 +728,7 @@ fn read_uuid_info() -> UuidInfo {
 }
 
 
-// ——— Platform-specific helpers (Windows) ———
 
-#[cfg(target_os = "windows")]
-fn get_wmi() -> Result<WMIConnection, wmi::WMIError> {
-    // Attempt to initialize COM. If it fails (e.g. already initialized), fall back to assuming it is initialized.
-    let com_con = match COMLibrary::new() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("HardwareInfo: COMLibrary::new() failed: {:?}. Assuming COM is already initialized.", e);
-            unsafe { COMLibrary::assume_initialized() }
-        }
-    };
-
-    match WMIConnection::new(com_con) {
-        Ok(con) => Ok(con),
-        Err(e) => {
-            eprintln!("HardwareInfo: WMIConnection::new() failed: {:?}", e);
-            Err(e)
-        }
-    }
-}
 
 #[cfg(target_os = "windows")]
 fn read_cache_sizes() -> (u64, u64) {
@@ -810,104 +737,199 @@ fn read_cache_sizes() -> (u64, u64) {
     (0, 0) 
 }
 
+// ——— PowerShell Helper ———
+
 #[cfg(target_os = "windows")]
-fn read_cpu_ids() -> (String, String, String) {
-    (String::new(), String::new(), String::new())
+fn exec_powershell<T: serde::de::DeserializeOwned>(script: &str) -> Option<T> {
+    use std::os::windows::process::CommandExt;
+    
+    // CREATE_NO_WINDOW flag to prevent console popups
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let output = std::process::Command::new("powershell")
+        .args(&["-NoProfile", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        eprintln!("PowerShell command failed: {}", String::from_utf8_lossy(&output.stderr));
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Handle single object vs array: ConvertTo-Json might return single obj if only 1 result.
+    // We can force array in PS or handle it here.
+    // Better to use `ConvertTo-Json -AsArray` if available (PS 7+), but standard PS 5.1 doesn't have it easily?
+    // Actually, wrap in @() in PS: @(Get-CimInstance...)
+    
+    match serde_json::from_str::<T>(&stdout) {
+        Ok(res) => Some(res),
+        Err(e) => {
+            eprintln!("Failed to parse JSON from PowerShell: {:?}\nOutput: {}", e, stdout);
+            None
+        }
+    }
+}
+
+// ——— Wrapper Structs for PowerShell JSON ———
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+struct PsGpu {
+    Name: Option<String>,
+    VideoProcessor: Option<String>,
+    AdapterRAM: Option<u64>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+struct PsMem {
+    Capacity: Option<u64>,
+    Speed: Option<u32>,
+    Manufacturer: Option<String>,
+    PartNumber: Option<String>,
+    SerialNumber: Option<String>,
+    FormFactor: Option<u16>,
+    MemoryType: Option<u16>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+struct PsBoard {
+    Manufacturer: Option<String>,
+    Product: Option<String>,
+    Version: Option<String>,
+    SerialNumber: Option<String>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+struct PsBios {
+    Manufacturer: Option<String>,
+    SMBIOSBIOSVersion: Option<String>,
+    ReleaseDate: Option<String>, // PowerShell date format might be weird
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Deserialize, Debug)]
+struct PsNetAdapter {
+    MACAddress: Option<String>,
+    IPEnabled: Option<bool>,
+}
+
+// ——— Implementation ———
+
+#[cfg(target_os = "windows")]
+fn read_gpu_info() -> Vec<GpuController> {
+    let script = "Get-CimInstance Win32_VideoController | Select-Object Name, VideoProcessor, AdapterRAM | ConvertTo-Json -Compress";
+    // Usually returns array or single object. We need to handle both? 
+    // Trick: @(Get-CimInstance...) ensures array.
+    let script = "@(Get-CimInstance Win32_VideoController) | Select-Object Name, VideoProcessor, AdapterRAM | ConvertTo-Json -Compress";
+    
+    let gpus: Option<Vec<PsGpu>> = exec_powershell(script);
+    let mut res = Vec::new();
+    
+    if let Some(ps_gpus) = gpus {
+       for gpu in ps_gpus {
+           res.push(GpuController {
+               model: gpu.Name.unwrap_or_default(),
+               vendor: gpu.VideoProcessor.clone().unwrap_or_else(|| "Unknown".to_string()),
+               vram: gpu.AdapterRAM.unwrap_or(0),
+               bus: "PCI".to_string(), 
+           });
+       }
+    }
+    res
 }
 
 #[cfg(target_os = "windows")]
 fn read_memory_layout() -> Vec<MemorySlot> {
+    let script = "@(Get-CimInstance Win32_PhysicalMemory) | Select-Object Capacity, Speed, Manufacturer, PartNumber, SerialNumber, FormFactor, MemoryType | ConvertTo-Json -Compress";
+    let mems: Option<Vec<PsMem>> = exec_powershell(script);
     let mut slots = Vec::new();
-    if let Ok(wmi_con) = get_wmi() {
-        match wmi_con.query::<Win32PhysicalMemory>() {
-            Ok(results) => {
-                for (index, mem) in results.iter().enumerate() {
-                    slots.push(MemorySlot {
-                        slot: index,
-                        size: mem.capacity.unwrap_or(0),
-                        clock_speed: mem.speed.unwrap_or(0) as u64,
-                        mem_type: format!("{:?}", mem.memory_type.unwrap_or(0)),
-                        form_factor: format!("{:?}", mem.form_factor.unwrap_or(0)),
-                        manufacturer: mem.manufacturer.clone().unwrap_or_default(),
-                        part_num: mem.part_number.clone().unwrap_or_default(),
-                        serial_num: mem.serial_number.clone().unwrap_or_default(),
-                    });
-                }
-            }
-            Err(e) => eprintln!("HardwareInfo: WMI Query Win32PhysicalMemory failed: {:?}", e),
+
+    if let Some(ps_mems) = mems {
+        for (i, mem) in ps_mems.iter().enumerate() {
+            slots.push(MemorySlot {
+                slot: i,
+                size: mem.Capacity.unwrap_or(0),
+                clock_speed: mem.Speed.unwrap_or(0) as u64,
+                mem_type: format!("{}", mem.MemoryType.unwrap_or(0)),
+                form_factor: format!("{}", mem.FormFactor.unwrap_or(0)),
+                manufacturer: mem.Manufacturer.clone().unwrap_or_default(),
+                part_num: mem.PartNumber.clone().unwrap_or_default(),
+                serial_num: mem.SerialNumber.clone().unwrap_or_default(),
+            });
         }
     }
     slots
 }
 
 #[cfg(target_os = "windows")]
-fn read_gpu_info() -> Vec<GpuController> {
-    let mut gpus = Vec::new();
-    if let Ok(wmi_con) = get_wmi() {
-        if let Ok(results) = wmi_con.query::<Win32VideoController>() {
-            for gpu in results {
-                gpus.push(GpuController {
-                    model: gpu.name.clone(),
-                    vendor: gpu.video_processor.clone().unwrap_or_default(),
-                    vram: gpu.adapter_r_a_m.unwrap_or(0),
-                    bus: "PCI".to_string(), // Simplified
-                });
-            }
-        }
-    }
-    gpus
-}
-
-#[cfg(target_os = "windows")]
 fn read_baseboard_info() -> BaseboardInfo {
-    let mut info = BaseboardInfo::default();
-    if let Ok(wmi_con) = get_wmi() {
-        match wmi_con.query::<Win32BaseBoard>() {
-            Ok(results) => {
-                if let Some(board) = results.first() {
-                    info.manufacturer = board.manufacturer.clone().unwrap_or_default();
-                    info.model = board.product.clone().unwrap_or_default();
-                    info.version = board.version.clone().unwrap_or_default();
-                    info.serial = board.serial_number.clone().unwrap_or_default();
-                }
-            }
-            Err(e) => eprintln!("HardwareInfo: WMI Query Win32BaseBoard failed: {:?}", e),
+    let script = "Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product, Version, SerialNumber | ConvertTo-Json -Compress";
+    // Baseboard is usually single, but use @() to be safe? Or just try parse?
+    // ConvertTo-Json for single object returns object, not array.
+    // We can try to parse as single object or array. 
+    // Let's force array just in case, or exec_powershell can handle it?
+    // Actually, BaseBoard is usually one. I'll parse as single object for simplicity, or Vec and take first.
+    let script = "@(Get-CimInstance Win32_BaseBoard) | Select-Object Manufacturer, Product, Version, SerialNumber | ConvertTo-Json -Compress";
+    let boards: Option<Vec<PsBoard>> = exec_powershell(script);
+    
+    if let Some(boards) = boards {
+        if let Some(b) = boards.first() {
+            return BaseboardInfo {
+                manufacturer: b.Manufacturer.clone().unwrap_or_default(),
+                model: b.Product.clone().unwrap_or_default(),
+                version: b.Version.clone().unwrap_or_default(),
+                serial: b.SerialNumber.clone().unwrap_or_default(),
+            };
         }
     }
-    info
+    BaseboardInfo::default()
 }
 
 #[cfg(target_os = "windows")]
 fn read_bios_info() -> BiosInfo {
-    let mut info = BiosInfo::default();
-    if let Ok(wmi_con) = get_wmi() {
-        if let Ok(results) = wmi_con.query::<Win32BIOS>() {
-            if let Some(bios) = results.first() {
-                info.vendor = bios.manufacturer.clone().unwrap_or_default();
-                info.version = bios.smbios_bios_version.clone().unwrap_or_default();
-                info.release_date = bios.release_date.clone().unwrap_or_default();
-            }
+    let script = "@(Get-CimInstance Win32_BIOS) | Select-Object Manufacturer, SMBIOSBIOSVersion, ReleaseDate | ConvertTo-Json -Compress";
+    let bioses: Option<Vec<PsBios>> = exec_powershell(script);
+    
+    if let Some(list) = bioses {
+        if let Some(b) = list.first() {
+             // ReleaseDate in WMI is often YYYYMMDDHHMMSS... encoded string.
+             // But ConvertTo-Json might output different structure?
+             // Usually it's a string like "/Date(123456)/" or raw string.
+             // We'll just take it as string for now.
+             let date_str = b.ReleaseDate.clone().unwrap_or_default();
+             return BiosInfo {
+                 vendor: b.Manufacturer.clone().unwrap_or_default(),
+                 version: b.SMBIOSBIOSVersion.clone().unwrap_or_default(),
+                 release_date: date_str,
+             };
         }
     }
-    info
+    BiosInfo::default()
 }
+
 
 #[cfg(target_os = "windows")]
 fn read_uuid_info() -> UuidInfo {
+    // We need MAC addresses of IPEnabled adapters
+    let script = "@(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True') | Select-Object MACAddress | ConvertTo-Json -Compress";
+    let adapters: Option<Vec<PsNetAdapter>> = exec_powershell(script);
     let mut macs = Vec::new();
-    if let Ok(wmi_con) = get_wmi() {
-        if let Ok(results) = wmi_con.query::<Win32NetworkAdapterConfiguration>() {
-            for adapter in results {
-                if adapter.ip_enabled.unwrap_or(false) {
-                    if let Some(mac) = adapter.mac_address {
-                        macs.push(mac);
-                    }
-                }
+
+    if let Some(list) = adapters {
+        for a in list {
+            if let Some(mac) = a.MACAddress {
+                macs.push(mac);
             }
         }
     }
     UuidInfo { macs }
 }
+
 
 
 // ——— Common helpers ———
