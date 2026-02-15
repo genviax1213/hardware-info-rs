@@ -1,0 +1,19 @@
+# Node
+node_modules
+dist
+dist-isolation
+
+# Rust
+target/
+src-tauri/target/
+**/*.rs.bk
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+.env
+.vscode
+.idea
+*.swp
