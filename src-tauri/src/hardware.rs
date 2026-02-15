@@ -731,6 +731,11 @@ fn read_uuid_info() -> UuidInfo {
 
 
 #[cfg(target_os = "windows")]
+fn read_cpu_ids() -> (String, String, String) {
+    (String::new(), String::new(), String::new())
+}
+
+#[cfg(target_os = "windows")]
 fn read_cache_sizes() -> (u64, u64) {
     // Simplification: Return 0 or try to fetch from Win32_CacheMemory
     // For now, returning 0 to match safe default
