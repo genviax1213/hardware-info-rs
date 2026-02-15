@@ -781,6 +781,7 @@ fn exec_powershell<T: serde::de::DeserializeOwned>(script: &str) -> Option<T> {
 
 #[cfg(target_os = "windows")]
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
 struct PsGpu {
     Name: Option<String>,
     VideoProcessor: Option<String>,
@@ -789,6 +790,7 @@ struct PsGpu {
 
 #[cfg(target_os = "windows")]
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
 struct PsMem {
     Capacity: Option<u64>,
     Speed: Option<u32>,
@@ -801,6 +803,7 @@ struct PsMem {
 
 #[cfg(target_os = "windows")]
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
 struct PsBoard {
     Manufacturer: Option<String>,
     Product: Option<String>,
@@ -810,6 +813,7 @@ struct PsBoard {
 
 #[cfg(target_os = "windows")]
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
 struct PsBios {
     Manufacturer: Option<String>,
     SMBIOSBIOSVersion: Option<String>,
@@ -818,6 +822,7 @@ struct PsBios {
 
 #[cfg(target_os = "windows")]
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
 struct PsNetAdapter {
     MACAddress: Option<String>,
     IPEnabled: Option<bool>,
@@ -827,9 +832,6 @@ struct PsNetAdapter {
 
 #[cfg(target_os = "windows")]
 fn read_gpu_info() -> Vec<GpuController> {
-    let script = "Get-CimInstance Win32_VideoController | Select-Object Name, VideoProcessor, AdapterRAM | ConvertTo-Json -Compress";
-    // Usually returns array or single object. We need to handle both? 
-    // Trick: @(Get-CimInstance...) ensures array.
     let script = "@(Get-CimInstance Win32_VideoController) | Select-Object Name, VideoProcessor, AdapterRAM | ConvertTo-Json -Compress";
     
     let gpus: Option<Vec<PsGpu>> = exec_powershell(script);
@@ -873,12 +875,6 @@ fn read_memory_layout() -> Vec<MemorySlot> {
 
 #[cfg(target_os = "windows")]
 fn read_baseboard_info() -> BaseboardInfo {
-    let script = "Get-CimInstance Win32_BaseBoard | Select-Object Manufacturer, Product, Version, SerialNumber | ConvertTo-Json -Compress";
-    // Baseboard is usually single, but use @() to be safe? Or just try parse?
-    // ConvertTo-Json for single object returns object, not array.
-    // We can try to parse as single object or array. 
-    // Let's force array just in case, or exec_powershell can handle it?
-    // Actually, BaseBoard is usually one. I'll parse as single object for simplicity, or Vec and take first.
     let script = "@(Get-CimInstance Win32_BaseBoard) | Select-Object Manufacturer, Product, Version, SerialNumber | ConvertTo-Json -Compress";
     let boards: Option<Vec<PsBoard>> = exec_powershell(script);
     
