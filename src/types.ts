@@ -120,6 +120,16 @@ export interface PeripheralInfo {
   usbDevices: UsbDevice[];
 }
 
+export interface OpticalDevice {
+  name: string;
+  model: string;
+  vendor: string;
+}
+
+export interface OpticalInfo {
+  devices: OpticalDevice[];
+}
+
 export interface BaseboardInfo {
   manufacturer: string;
   model: string;
@@ -177,6 +187,7 @@ export interface HardwareInfo {
   memory: MemoryInfo;
   audio: AudioInfo;
   peripherals: PeripheralInfo;
+  optical: OpticalInfo;
   runtime: RuntimeInfo;
 }
 

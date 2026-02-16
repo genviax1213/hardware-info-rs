@@ -170,6 +170,20 @@ pub struct PeripheralInfo {
 
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct OpticalDevice {
+    pub name: String,
+    pub model: String,
+    pub vendor: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpticalInfo {
+    pub devices: Vec<OpticalDevice>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct BaseboardInfo {
     pub manufacturer: String,
     pub model: String,
@@ -243,6 +257,7 @@ pub struct HardwareInfo {
     pub memory: MemoryInfo,
     pub audio: AudioInfo,
     pub peripherals: PeripheralInfo,
+    pub optical: OpticalInfo,
     pub runtime: RuntimeInfo,
 }
 
@@ -279,6 +294,7 @@ pub fn collect_hardware_info() -> HardwareInfo {
         memory: collect_memory(&sys),
         audio: collect_audio(),
         peripherals: collect_peripherals(),
+        optical: collect_optical(),
         runtime: collect_runtime(),
     }
 }
@@ -572,6 +588,48 @@ fn collect_audio() -> AudioInfo {
 #[cfg(not(target_os = "linux"))]
 fn collect_peripherals() -> PeripheralInfo {
     PeripheralInfo::default()
+}
+
+#[cfg(target_os = "linux")]
+fn collect_optical() -> OpticalInfo {
+    let mut devices = Vec::new();
+    // Try to read from procfs
+    if let Ok(info) = std::fs::read_to_string("/proc/sys/dev/cdrom/info") {
+        let mut drive_name = String::new();
+        // The file format is a bit weird, with labels followed by values for each drive
+        for line in info.lines() {
+            if line.starts_with("drive name:") {
+                drive_name = line.split(':').nth(1).unwrap_or("").trim().to_string();
+            }
+            if !drive_name.is_empty() && line.starts_with("drive model:") {
+                let model = line.split(':').nth(1).unwrap_or("").trim().to_string();
+                devices.push(OpticalDevice {
+                    name: drive_name.clone(),
+                    model,
+                    vendor: "Unknown".to_string(),
+                });
+                drive_name = String::new(); // Reset for multiple drives
+            }
+        }
+    }
+    
+    // Fallback: check /dev/sr0 if procfs was empty/failed to parse correctly
+    if devices.is_empty() {
+        if std::path::Path::new("/dev/sr0").exists() {
+            devices.push(OpticalDevice {
+                name: "sr0".to_string(),
+                model: "CD/DVD Drive".to_string(),
+                vendor: "Unknown".to_string(),
+            });
+        }
+    }
+
+    OpticalInfo { devices }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn collect_optical() -> OpticalInfo {
+    OpticalInfo::default()
 }
 
 // ——— Platform-specific helpers (Linux) ———

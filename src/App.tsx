@@ -18,6 +18,7 @@ import OperatingSystem from './pages/OperatingSystem';
 import Network from './pages/Network';
 import Audio from './pages/Audio';
 import Peripherals from './pages/Peripherals';
+import OpticalDrives from './pages/OpticalDrives';
 
 function App() {
   const [hardwareInfo, setHardwareInfo] = useState<HardwareInfo | null>(null);
@@ -98,6 +99,8 @@ function App() {
         return <Audio hardware={mergedHardware} />;
       case 'peripherals':
         return <Peripherals hardware={mergedHardware} />;
+      case 'optical':
+        return <OpticalDrives hardware={mergedHardware} />;
       default:
         return <Summary hardware={mergedHardware} live={liveInfo} />;
     }

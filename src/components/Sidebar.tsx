@@ -9,7 +9,8 @@ import {
   Music, 
   MousePointer2, 
   Network,
-  Activity
+  Activity,
+  Disc
 } from 'lucide-react';
 
 export type TabId = 
@@ -22,7 +23,8 @@ export type TabId =
   | 'storage' 
   | 'audio' 
   | 'peripherals' 
-  | 'network';
+  | 'network'
+  | 'optical';
 
 interface Tab {
   id: TabId;
@@ -41,6 +43,7 @@ const tabs: Tab[] = [
   { id: 'audio', label: 'Audio', icon: Music },
   { id: 'peripherals', label: 'Peripherals', icon: MousePointer2 },
   { id: 'network', label: 'Network', icon: Network },
+  { id: 'optical', label: 'Optical Drives', icon: Disc },
 ];
 
 interface SidebarProps {
@@ -78,7 +81,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
         })}
       </nav>
       <div className="p-4 border-t border-gray-800 text-xs text-gray-500 text-center">
-        v0.1.4
+        v0.1.6
       </div>
     </div>
   );
