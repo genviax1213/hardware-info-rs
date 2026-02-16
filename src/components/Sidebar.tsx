@@ -60,7 +60,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
           Hardware Info
         </h1>
       </div>
-      <nav className="flex-1 py-4">
+      <nav className="sidebar-nav flex-1 py-4">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -68,11 +68,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`w-full flex items-center gap-3 px-6 py-3 transition-colors ${
-                isActive 
-                  ? 'bg-blue-600/10 text-blue-400 border-r-2 border-blue-500' 
-                  : 'hover:bg-gray-800 hover:text-white'
-              }`}
+              className={`sidebar-tab flex items-center gap-3 px-6 py-3 ${isActive ? 'is-active' : ''}`}
             >
               <Icon size={18} />
               <span className="font-medium">{tab.label}</span>
