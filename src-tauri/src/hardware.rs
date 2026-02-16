@@ -139,6 +139,37 @@ pub struct NetworkInfo {
 
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct AudioDevice {
+    pub name: String,
+    pub manufacturer: String,
+    pub status: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioInfo {
+    pub devices: Vec<AudioDevice>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UsbDevice {
+    pub name: String,
+    pub vendor: String,
+    pub vendor_id: String,
+    pub product_id: String,
+    pub bus: String,
+    pub device: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PeripheralInfo {
+    pub usb_devices: Vec<UsbDevice>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct BaseboardInfo {
     pub manufacturer: String,
     pub model: String,
@@ -210,6 +241,8 @@ pub struct HardwareInfo {
     pub network: NetworkInfo,
     pub storage: StorageInfo,
     pub memory: MemoryInfo,
+    pub audio: AudioInfo,
+    pub peripherals: PeripheralInfo,
     pub runtime: RuntimeInfo,
 }
 
@@ -244,6 +277,8 @@ pub fn collect_hardware_info() -> HardwareInfo {
         network: collect_network(),
         storage: collect_storage(),
         memory: collect_memory(&sys),
+        audio: collect_audio(),
+        peripherals: collect_peripherals(),
         runtime: collect_runtime(),
     }
 }
@@ -459,6 +494,84 @@ fn collect_runtime() -> RuntimeInfo {
         .unwrap_or_default()
         .as_secs();
     RuntimeInfo { uptime, current }
+}
+
+#[cfg(target_os = "linux")]
+fn collect_audio() -> AudioInfo {
+    let output = Command::new("aplay").arg("-l").output();
+    let mut devices = Vec::new();
+
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            if line.starts_with("card") {
+                // card 0: PCH [HDA Intel PCH], device 0: ALC3246 Analog...
+                let parts: Vec<&str> = line.splitn(4, ':').collect();
+                if parts.len() >= 2 {
+                    let name_part = parts[1].trim();
+                    let name = name_part.split('[').next().unwrap_or(name_part).trim().to_string();
+                    let manufacturer = if name_part.contains('[') {
+                        name_part.split('[').nth(1).and_then(|s| s.split(']').next()).unwrap_or("Unknown").to_string()
+                    } else {
+                        "Unknown".to_string()
+                    };
+                    
+                    devices.push(AudioDevice {
+                        name,
+                        manufacturer,
+                        status: "Active".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    AudioInfo { devices }
+}
+
+#[cfg(target_os = "linux")]
+fn collect_peripherals() -> PeripheralInfo {
+    let output = Command::new("lsusb").output();
+    let mut usb_devices = Vec::new();
+
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            // Bus 002 Device 001: ID 1d6b:0003 Linux Foundation 3.0 root hub
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 7 && parts[4] == "ID" {
+                let ids: Vec<&str> = parts[5].split(':').collect();
+                if ids.len() == 2 {
+                    let vendor_id = ids[0].to_string();
+                    let product_id = ids[1].to_string();
+                    let bus = parts[1].to_string();
+                    let device = parts[3].trim_end_matches(':').to_string();
+                    let name = parts[6..].join(" ");
+                    
+                    usb_devices.push(UsbDevice {
+                        name,
+                        vendor: "USB Device".to_string(), // lsusb doesn't give vendor name easily without -v or a database
+                        vendor_id,
+                        product_id,
+                        bus,
+                        device,
+                    });
+                }
+            }
+        }
+    }
+
+    PeripheralInfo { usb_devices }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn collect_audio() -> AudioInfo {
+    AudioInfo::default()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn collect_peripherals() -> PeripheralInfo {
+    PeripheralInfo::default()
 }
 
 // ——— Platform-specific helpers (Linux) ———

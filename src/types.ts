@@ -97,6 +97,29 @@ export interface NetworkInfo {
   interfaces: NetworkInterface[];
 }
 
+export interface AudioDevice {
+  name: string;
+  manufacturer: string;
+  status: string;
+}
+
+export interface AudioInfo {
+  devices: AudioDevice[];
+}
+
+export interface UsbDevice {
+  name: string;
+  vendor: string;
+  vendorId: string;
+  productId: string;
+  bus: string;
+  device: string;
+}
+
+export interface PeripheralInfo {
+  usbDevices: UsbDevice[];
+}
+
 export interface BaseboardInfo {
   manufacturer: string;
   model: string;
@@ -152,6 +175,8 @@ export interface HardwareInfo {
   network: NetworkInfo;
   storage: StorageInfo;
   memory: MemoryInfo;
+  audio: AudioInfo;
+  peripherals: PeripheralInfo;
   runtime: RuntimeInfo;
 }
 
